@@ -1,17 +1,57 @@
 from flask import Flask, request, jsonify, send_file
 import random, string
+import sqlite3
+from datetime import datetime
 import pyshorteners
 import qrcode
 import io
 
 app = Flask(__name__)
 
-# 🏠 Home
+# =========================
+# DATABASE + TRACKING
+# =========================
+def init_db():
+    conn = sqlite3.connect("usage.db")
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        endpoint TEXT,
+        timestamp TEXT
+    )
+    """)
+
+    conn.commit()
+    conn.close()
+
+def log_usage(endpoint):
+    conn = sqlite3.connect("usage.db")
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "INSERT INTO logs (endpoint, timestamp) VALUES (?, ?)",
+        (endpoint, datetime.now())
+    )
+
+    conn.commit()
+    conn.close()
+
+@app.before_request
+def track_all_requests():
+    log_usage(request.path)
+
+# =========================
+# ROUTES
+# =========================
+
+# Home
 @app.route('/')
 def home():
-    return {"message": "Tiny Tools API is live 🔥"}
+    return {"message": "Tiny Tools API is live"}
 
-# 🔐 Password Generator
+# Password Generator
 @app.route('/generate-password')
 def generate_password():
     length = int(request.args.get('length', 12))
@@ -19,7 +59,7 @@ def generate_password():
     password = ''.join(random.choice(chars) for _ in range(length))
     return {"password": password}
 
-# 🔗 Real URL Shortener
+# URL Shortener
 @app.route('/shorten-url')
 def shorten_url():
     url = request.args.get('url')
@@ -33,25 +73,36 @@ def shorten_url():
     except Exception as e:
         return {"error": str(e)}, 500
 
-# 🔳 Real QR Generator
+# QR Code Generator
 @app.route('/qr')
 def generate_qr():
     text = request.args.get('text')
     if not text:
         return {"error": "Text required"}, 400
 
-    qr = qrcode.QRCode(version=1, box_size=10, border=5)
-    qr.add_data(text)
-    qr.make(fit=True)
+    qr = qrcode.make(text)
 
-    img = qr.make_image(fill_color="black", back_color="white")
-
-    # Save image to memory
     buf = io.BytesIO()
-    img.save(buf, 'PNG')
+    qr.save(buf)
     buf.seek(0)
 
-    return send_file(buf, mimetype='image/png', download_name='qr.png')
+    return send_file(buf, mimetype='image/png')
 
+# View Logs
+@app.route('/logs')
+def get_logs():
+    conn = sqlite3.connect("usage.db")
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM logs")
+    data = cursor.fetchall()
+
+    conn.close()
+    return {"logs": data}
+
+# =========================
+# RUN APP
+# =========================
 if __name__ == '__main__':
+    init_db()
     app.run(debug=True)
